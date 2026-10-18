@@ -1,0 +1,44 @@
+# Build directories
+build/
+bin/
+obj/
+out/
+
+# Executables and object files
+*.exe
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+
+# Generated assembly and intermediate files during tests
+*.s
+*.asm
+*.ll
+*.bc
+a.out
+*.tmp
+
+# CMake artifacts (when generated in-tree)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# IDE / Editor configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Python test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
