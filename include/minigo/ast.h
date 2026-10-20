@@ -1,6 +1,10 @@
 #ifndef MINIGO_AST_H
 #define MINIGO_AST_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "minigo/common.h"
 #include "minigo/token.h"
 
@@ -201,5 +205,9 @@ ASTStmt *stmt_new_var_decl(Arena *arena, SourcePos pos, const char *name, TypeNo
 ASTStmt *stmt_new_block(Arena *arena, SourcePos pos, ASTStmt **stmts, size_t count);
 
 void ast_dump(const ASTProgram *prog, FILE *out);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MINIGO_AST_H */

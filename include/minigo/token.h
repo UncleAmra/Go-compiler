@@ -1,6 +1,10 @@
 #ifndef MINIGO_TOKEN_H
 #define MINIGO_TOKEN_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "minigo/common.h"
 
 typedef enum {
@@ -83,5 +87,9 @@ typedef struct {
 
 const char *token_type_name(TokenType type);
 void token_print(const Token *tok);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MINIGO_TOKEN_H */

@@ -1,6 +1,10 @@
 #ifndef MINIGO_TYPECHECK_H
 #define MINIGO_TYPECHECK_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "minigo/ast.h"
 
 typedef struct Symbol Symbol;
@@ -36,5 +40,9 @@ typedef struct {
 
 void typechecker_init(TypeChecker *tc, Arena *arena);
 bool typecheck_program(TypeChecker *tc, ASTProgram *prog);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MINIGO_TYPECHECK_H */

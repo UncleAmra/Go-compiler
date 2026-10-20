@@ -1,6 +1,10 @@
 #ifndef MINIGO_COMMON_H
 #define MINIGO_COMMON_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -25,7 +29,11 @@ typedef struct ArenaChunk {
     struct ArenaChunk *next;
     size_t capacity;
     size_t used;
+#if defined(__cplusplus)
+    char data[1];
+#else
     char data[];
+#endif
 } ArenaChunk;
 
 typedef struct {
@@ -47,5 +55,9 @@ char *read_file_to_string(const char *path, size_t *out_length);
 void report_error(SourcePos pos, const char *fmt, ...);
 void report_warning(SourcePos pos, const char *fmt, ...);
 extern int g_error_count;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MINIGO_COMMON_H */

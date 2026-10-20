@@ -11,8 +11,8 @@ def run_tests():
 
     examples_dir = "examples"
     test_cases = [
-        ("01_hello.go", 0, "42\n"),
-        ("02_arithmetic.go", 53, "53\n"),
+        ("01_hello.go", 0, "42\n52\n32\n22\n"),
+        ("02_arithmetic.go", 53, "53\n27\n15\n"),
         ("03_control_flow.go", 45, "1\n45\n"),
         ("04_functions.go", 42, "42\n"),
     ]

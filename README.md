@@ -1,262 +1,356 @@
 # Mini Go Compiler (`minigo`)
 
-> **Compiler Course Final Project (40% of Total Grade)**  
-> Target Architecture: **x86-64 Assembly** (GAS Syntax)  
-> Implementation Language: **C (C11)** / Extensible with **C++**  
-> Optional Extra Points: **Formal Verification in Rocq (Coq) or Lean 4**
+> **Compiler Course Final Project**  
+> Target Architecture: **x86-64 Assembly** (GAS / AT&T Syntax)  
+> Implementation Language: **C (C11) Frontend + C++ (C++17) Middle-End & Backend**  
+> Complete Pipeline: **Lexer & Parser -> AST -> TAC -> CFG -> SSA -> Optimizations (O1) -> x86-64 Assembly -> GCC Bridge**
 
 ---
 
 ## Table of Contents
-- [1. Project Overview & Objectives](#1-project-overview--objectives)
-- [2. How This Compiler Works](#2-how-this-compiler-works)
-- [3. What Languages Do People Use for Compilers?](#3-what-languages-do-people-use-for-compilers)
-- [4. Architectural Pipeline](#4-architectural-pipeline)
-- [5. Repository Structure](#5-repository-structure)
-- [6. Course Schedule & Milestone Roadmap](#6-course-schedule--milestone-roadmap)
-- [7. Quick Start & Build Instructions](#7-quick-start--build-instructions)
-- [8. Running Tests & Examples](#8-running-tests--examples)
-- [9. Extra Credit: Formal Verification](#9-extra-credit-formal-verification)
+- [1. Project Overview & Features](#1-project-overview--features)
+- [2. End-to-End Compiler Pipeline](#2-end-to-end-compiler-pipeline)
+  - [Phase 1: Lexical Analysis (Scanner + ASI)](#phase-1-lexical-analysis-scanner--asi)
+  - [Phase 2: Syntax Analysis (Recursive Descent + AST)](#phase-2-syntax-analysis-recursive-descent--ast)
+  - [Phase 3: Semantic Analysis & Type Checking](#phase-3-semantic-analysis--type-checking)
+  - [Phase 4: Three-Address Code (TAC) Lowering](#phase-4-three-address-code-tac-lowering)
+  - [Phase 5: Basic Blocks & Control Flow Graph (CFG)](#phase-5-basic-blocks--control-flow-graph-cfg)
+  - [Phase 6: Static Single Assignment (SSA) Form](#phase-6-static-single-assignment-ssa-form)
+  - [Phase 7: SSA Optimization Passes (Constant Folding & DCE)](#phase-7-ssa-optimization-passes-constant-folding--dce)
+  - [Phase 8: x86-64 Assembly Code Generation](#phase-8-x86-64-assembly-code-generation)
+  - [Phase 9: GCC Bridge & Driver](#phase-9-gcc-bridge--driver)
+- [3. Repository Structure](#3-repository-structure)
+- [4. Quick Start & Build Instructions](#4-quick-start--build-instructions)
+- [5. Compiling Mini Go Programs (GCC Bridge)](#5-compiling-mini-go-programs-gcc-bridge)
+- [6. Intermediate Representation (IR) Inspection](#6-intermediate-representation-ir-inspection)
+- [7. Running the Automated Test Suite](#7-running-the-automated-test-suite)
 
 ---
 
-## 1. Project Overview & Objectives
+## 1. Project Overview & Features
 
-The goal of this project is to design and implement an end-to-end compiler for **Mini Go**, a statically typed subset of the Go programming language that compiles down to native **x86-64 assembly**.
+`minigo` is a complete, educational, optimizing compiler for **Mini Go**, a statically typed subset of the Go programming language that compiles directly down to native **x86-64 assembly** and links with GCC into native binaries.
 
 ### Key Language Features Supported:
 - **Package declarations:** `package main`
-- **Functions & Parameters:** `func name(x int, y int) int { ... }`
+- **Functions & Parameters:** `func add(a int, b int) int { ... }`
 - **Variable declarations:** Explicit (`var x int = 10`) and short declarations (`x := 10`)
-- **Primitive & Composite Types:** `int`, `bool`, `string`, `*T` (pointers), `struct`
-- **Control Flow:** `if / else` conditionals and `for` loops
-- **Arithmetic & Logical Expressions:** Full operator precedence hierarchy (`+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`)
-- **Automatic Semicolon Insertion (ASI):** Faithful reproduction of Go's official specification rule for newline-triggered semicolons
-- **Built-in I/O:** `println(expr)` and `print(expr)`
+- **Types:** `int`, `bool`, `string`, `*T` (pointers), `struct`
+- **Control Flow:** `if / else` conditionals and `for` loops (including init, condition, and post-statements)
+- **Arithmetic & Logical Expressions:** Full operator precedence hierarchy (`+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`, unary `-`)
+- **Automatic Semicolon Insertion (ASI):** Faithful implementation of Go's official specification rule for newline-triggered semicolons
+- **Built-in I/O:** `println(expr)` and `print(expr)` linked to C runtime `printf`
 
 ---
 
-## 2. How This Compiler Works
+## 2. End-to-End Compiler Pipeline
 
-A compiler is a program that translates human-readable source code into machine instructions that a CPU can directly execute. `minigo` processes code through five core phases:
+The compiler is organized as a modular pipeline taking source code through nine clear stages:
 
 ```mermaid
 flowchart TD
-    Src["Source Code (.go)"] --> Lexer["1. Lexical Analysis (Scanner + ASI)"]
-    Lexer -->|Token Stream| Parser["2. Syntax Analysis (Parser)"]
-    Parser -->|Abstract Syntax Tree (AST)| TypeCheck["3. Semantic Analysis (Type Checker)"]
-    TypeCheck -->|Decorated AST + Symbol Table| Codegen["4. Code Generation (x86-64)"]
-    Codegen -->|Assembly File (.s)| Toolchain["5. Assembler & Linker (gcc)"]
-    Toolchain --> Bin["Native Executable (.exe / binary)"]
+    Src["Source Code (.go)"] --> Lexer["1. Lexer (Scanner + ASI)"]
+    Lexer -->|Tokens| Parser["2. Parser (Recursive Descent)"]
+    Parser -->|AST| TypeCheck["3. Semantic Type Checker"]
+    TypeCheck -->|Typed AST| TAC["4. TAC Lowering (3-Address Code)"]
+    TAC -->|Linear TAC IR| CFG["5. CFG & Dominator Tree"]
+    CFG -->|Basic Blocks + DF| SSA["6. SSA Conversion (Phi-Nodes)"]
+    SSA -->|SSA IR| Opt["7. SSA Optimizations (Folding + DCE)"]
+    Opt -->|Optimized SSA| Codegen["8. Target Codegen (x86-64)"]
+    Codegen -->|Assembly File (.s)| GCC["9. GCC Assembler & Linker"]
+    GCC --> Bin["Native Executable (.exe)"]
 ```
 
-### Phase 1: Lexical Analysis (Lexer) + Automatic Semicolon Insertion (ASI)
-- Reads the raw source text character-by-character and groups them into meaningful **tokens** (e.g. keywords, identifiers, numbers, operators).
-- **Go's Unique Feature (ASI):** Unlike C or Java where developers must write explicit semicolons, Go automatically inserts semicolons. When the lexer hits a newline (`\n`), if the previous token was an identifier, literal, `return`, `break`, `continue`, or closing delimiter (`)`, `]`, `}`), the lexer automatically yields a `TOKEN_SEMICOLON`.
+### Phase 1: Lexical Analysis (Scanner + ASI)
+- Located in: `include/minigo/lexer.h`, `src/lexer.c`
+- Tokenizes raw UTF-8 Go source text.
+- **Automatic Semicolon Insertion (ASI):** Automatically inserts `TOKEN_SEMICOLON` at newlines if the preceding token was an identifier, literal, `return`, `break`, `continue`, or closing delimiter (`)`, `]`, `}`).
 
-### Phase 2: Syntax Analysis (Parser) & AST Construction
-- Validates that the token sequence obeys Mini Go's grammar rules using **Recursive Descent Parsing**.
-- For expressions (`a + b * c`), it uses **Precedence Climbing** to guarantee proper mathematical order of operations.
-- Builds an **Abstract Syntax Tree (AST)** allocated cleanly inside a **Dynamic Arena Allocator** for high speed and zero memory leaks.
+### Phase 2: Syntax Analysis (Recursive Descent + AST)
+- Located in: `include/minigo/parser.h`, `include/minigo/ast.h`, `src/parser.c`, `src/ast.c`
+- Parses statements and declarations using recursive descent.
+- Evaluates binary expressions with correct operator precedence using precedence climbing.
+- Allocates AST nodes inside a high-speed memory arena (`include/minigo/common.h`).
 
 ### Phase 3: Semantic Analysis & Type Checking
-- Manages nested **Symbol Tables (Scopes)**: global package scope, function scopes, and block scopes.
-- Verifies that variables are declared before use, detects type mismatches (e.g., assigning a string to an integer), and infers types for `:=` declarations.
+- Located in: `include/minigo/typecheck.h`, `src/typecheck.c`
+- Manages lexical scopes and symbol tables (global, function, block).
+- Validates declaration before use, checks type consistency, and infers types for `:=` declarations.
 
-### Phase 4: Target Code Generation (x86-64)
-- Traverses the AST and translates language constructs into **x86-64 assembly instructions** using GNU Assembler (GAS) format:
-  - Function entry/exit with standard stack frame prologue (`pushq %rbp; movq %rsp, %rbp; subq $N, %rsp`) and epilogue (`leave; ret`).
-  - Expression evaluation using accumulator (`%rax`) and register stack operations.
-  - Calling conventions: Supports both **Windows x64 ABI** (`%rcx`, `%rdx`, `%r8`, `%r9` + shadow space) and **System V AMD64 ABI** (`%rdi`, `%rsi`, `%rdx`, `%rcx`, etc. for Linux/macOS).
+### Phase 4: Three-Address Code (TAC) Lowering
+- Located in: `include/minigo/tac.h`, `src/tac.cpp`
+- Flattens nested AST expressions into a linearized intermediate representation (IR) where every instruction has at most one operator and at most three operand addresses:
+  ```text
+  t0 = a * 2
+  t1 = t0 + b
+  t2 = t1 - 4
+  c = t2
+  ```
+- Generates synthetic temporaries (`t0`, `t1`, ...) and jump labels (`L_else_0`, `L_endif_1`, `L_loop_cond_2`).
 
-### Phase 5: Assembler and Linker Driver
-- `minigo` emits `.s` assembly and automatically invokes `gcc` (or `as` + `ld`) to assemble the instructions and link against standard C runtime libraries (e.g. `printf` for I/O), producing a native executable.
+### Phase 5: Basic Blocks & Control Flow Graph (CFG)
+- Located in: `include/minigo/cfg.h`, `src/cfg.cpp`
+- Partitions TAC instructions into **Basic Blocks** using leader analysis (block entries, jump targets, post-jump instructions).
+- Connects predecessor and successor edges, ensuring explicit fallthrough jumps between blocks.
+- Filters unreachable blocks via BFS reachability.
+- Computes **Dominators ($Dom(B)$)**, **Immediate Dominators ($idom(B)$)**, and **Dominance Frontiers ($DF(B)$)** using Cytron's textbook algorithm.
 
----
+### Phase 6: Static Single Assignment (SSA) Form
+- Located in: `include/minigo/ssa.h`, `src/ssa.cpp`
+- Transforms the program into true SSA form where **every variable is assigned exactly once**:
+  - Inserts $\phi$-nodes (e.g. `sum_1 = phi([B3: sum_0], [B5: sum_2])`) at join points identified by iterated dominance frontiers ($IDF$).
+  - Renames variable definitions into monotonically increasing versions (`x_0`, `x_1`, `x_2`).
+  - Resolves variable operand reads to their currently active reaching definition using dominator-tree depth-first search (DFS).
 
-## 3. What Languages Do People Use for Compilers?
+### Phase 7: SSA Optimization Passes (Constant Folding & DCE)
+- Located in: `include/minigo/opt.h`, `src/opt.cpp`
+- **Constant Folding & Propagation:** Evaluates arithmetic expressions (`+`, `-`, `*`, `/`, `%`) and comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`) at compile time when operands are constants. Folds identical $\phi$-nodes and resolves conditional branches whose conditions are statically known.
+- **Dead Code Elimination (DCE):** Constructs a dependency graph from observable side-effect roots (`println`, `ret`, `call`, branches) and eliminates unreferenced variables and unused instructions.
+- Iterates passes in a fixed-point loop until no further optimizations can be made.
+- Prints clear before-and-after debug logs when `-O1` or `-opt` is enabled.
 
-You asked what language people typically use to write compilers. Here is how industry and academia choose:
+### Phase 8: x86-64 Assembly Code Generation
+- Located in: `include/minigo/codegen_ssa.h`, `src/codegen_ssa.cpp`
+- **Out-of-SSA Deconstruction:** Eliminates $\phi$-nodes by placing parallel copies along incoming predecessor edges before branch instructions.
+- **Stack Frame Layout:** Allocates unique 8-byte slots for all SSA variables and temporaries, ensuring 16-byte stack frame alignment.
+- **Calling Conventions:**
+  - **Windows x64 ABI:** Parameters passed in `%rcx`, `%rdx`, `%r8`, `%r9` with 32-byte shadow space.
+  - **System V AMD64 ABI (Linux/macOS):** Parameters passed in `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`.
+- Emits clean, well-commented GAS / AT&T syntax assembly.
 
-| Language | Typical Use Case | Why People Choose It | Trade-offs |
-| :--- | :--- | :--- | :--- |
-| **C** | TinyCC (tcc), Lua, early GCC, CPython | Ultimate hardware transparency, manual memory layout, no hidden runtime overhead. | Manual data structures, no built-in pattern matching. |
-| **C++** | **LLVM / Clang**, modern GCC, V8 JavaScript engine | The industry standard for production compilers. Rich STL, polymorphic AST class hierarchies, LLVM ecosystem. | Complex syntax, steep learning curve. |
-| **OCaml / Haskell** | Academic courses, CompCert, early Rust | Algebraic Data Types (ADTs) and pattern matching make manipulating ASTs very concise. | Less intuitive mapping to hardware memory models. |
-| **Rust** | Rustc, SWC, modern tooling | Pattern matching + memory safety without a garbage collector. | Strict borrow checker can complicate graph-like ASTs. |
-
-### Why C (with C++ compatibility) was chosen for this project:
-1. **Total Visibility:** Writing the compiler in C forces you to understand **memory layout, pointer arithmetic, struct alignment, and stack frames**—exactly what compiler exams test.
-2. **Dynamic Arena Memory Management:** Rather than struggling with hundreds of `malloc`/`free` calls, we use an arena allocator (a standard compiler industry pattern).
-3. **Seamless Extensibility:** All header files use standard C interfaces, so you can easily write future modules (e.g. register allocation or optimizer) in C++ simply by compiling with `g++`.
-
----
-
-## 4. Architectural Pipeline
-
-```text
-[Input Mini Go File]
-         |
-         v
-  [src/lexer.c]        <-- Scans characters, handles comments, performs ASI
-         |  (Tokens)
-         v
-  [src/parser.c]       <-- Recursive descent + precedence climbing
-         |  (AST Nodes in Arena)
-         v
-  [src/typecheck.c]    <-- Scopes, symbol table, type validation
-         |  (Typed AST)
-         v
-  [src/codegen_x86.c]  <-- Emits GAS x86-64 assembly instructions
-         |  (Assembly .s)
-         v
-  [gcc driver]         <-- Assembles & links native executable
-         |
-         v
-  [Native Binary (.exe)]
-```
+### Phase 9: GCC Bridge & Driver
+- Located in: `src/main.cpp`
+- Emits the assembly text file (`.s`) and invokes the system `gcc` assembler/linker to produce a standalone native binary (`.exe`).
 
 ---
 
-## 5. Repository Structure
+## 3. Repository Structure
 
 ```
 compiler/
-├── CMakeLists.txt              # Standard CMake build configuration
-├── Makefile                    # Makefile for make / mingw32-make
-├── .gitignore                  # Git ignore rules for build artifacts
-├── README.md                   # Project overview, roadmap & documentation
+├── CMakeLists.txt              # CMake build script supporting C11 and C++17
+├── Makefile                    # Portable Makefile (Windows mingw32-make & Linux make)
+├── README.md                   # This documentation
 ├── docs/
-│   ├── ARCHITECTURE.md         # Detailed compiler internal architecture
-│   ├── MINI_GO_SPEC.md         # Mini Go language syntax & grammar specification
+│   ├── ARCHITECTURE.md         # Internal compiler architecture reference
+│   ├── MINI_GO_SPEC.md         # Mini Go grammar and language specification
 │   └── FORMAL_VERIFICATION.md  # Extra points roadmap for Rocq (Coq) / Lean 4
 ├── include/
 │   └── minigo/
-│       ├── common.h            # Source positions, arena allocator, error diagnostics
+│       ├── common.h            # SourcePos, memory arena allocator, error diagnostics
 │       ├── token.h             # Token definitions, keywords, operators
-│       ├── lexer.h             # Lexer state and interface
-│       ├── ast.h               # AST definitions, types, expressions, statements
-│       ├── parser.h            # Parser interface
-│       ├── typecheck.h         # Symbol table, scopes, type checker
-│       └── codegen.h           # x86-64 code generator interface
+│       ├── lexer.h             # Lexer state and scanner interface
+│       ├── ast.h               # AST nodes, expressions, statements, types
+│       ├── parser.h            # Recursive descent parser interface
+│       ├── typecheck.h         # Symbol tables, scopes, type checker
+│       ├── tac.h               # Three-Address Code (TAC) structures and lowering
+│       ├── cfg.h               # Basic blocks, CFG construction, Dominator tree & DF
+│       ├── ssa.h               # SSA form, Phi-nodes, SSA conversion
+│       ├── opt.h               # SSA optimizations: Constant Folding & DCE
+│       └── codegen_ssa.h       # x86-64 assembly generation from SSA IR
 ├── src/
-│   ├── main.c                  # Compiler CLI driver (-dump-tokens, -dump-ast, -S, -o)
-│   ├── common.c                # Memory arena & diagnostic implementation
-│   ├── token.c                 # Token string conversion & formatting
+│   ├── common.c                # Arena allocator and diagnostic implementation
+│   ├── token.c                 # Token formatting and string conversion
 │   ├── lexer.c                 # Hand-written Mini Go lexer with ASI
 │   ├── ast.c                   # AST node constructors & visual tree dumper
-│   ├── parser.c                # Recursive descent parser & precedence climbing
+│   ├── parser.c                # Parser with precedence climbing
 │   ├── typecheck.c             # Semantic analyzer and scope management
-│   └── codegen_x86.c           # x86-64 assembly code generator
+│   ├── tac.cpp                 # AST to linear TAC lowering implementation
+│   ├── cfg.cpp                 # Basic block partition, dominators, dominance frontiers
+│   ├── ssa.cpp                 # Phi-node placement and dominator-tree DFS renaming
+│   ├── opt.cpp                 # Constant folding, propagation, and DCE passes
+│   ├── codegen_ssa.cpp         # Out-of-SSA deconstruction and x86-64 code generation
+│   └── main.cpp                # Compiler CLI driver & GCC bridge
 ├── examples/
-│   ├── 01_hello.go             # Basic return and println
-│   ├── 02_arithmetic.go        # Variables and binary arithmetic expressions
-│   ├── 03_control_flow.go      # If-else conditionals and for loops
-│   ├── 04_functions.go         # Function declarations and multi-parameter passing
-│   └── 05_structs.go           # Struct type definition
+│   ├── 01_hello.go             # Println and return
+│   ├── 02_arithmetic.go        # Binary arithmetic, variable assignment, precedence
+│   ├── 03_control_flow.go      # If-else conditionals and for-loops
+│   ├── 04_functions.go         # Multi-parameter function declaration and calls
+│   └── 05_structs.go           # Struct type definitions
 └── tests/
-    ├── test_runner.py          # Automated Python integration test suite
+    ├── test_runner.py          # Automated integration test runner
     └── test_lexer.c            # Unit tests for lexer & ASI
 ```
 
 ---
 
-## 6. Course Schedule & Milestone Roadmap
-
-This roadmap connects your course syllabus weeks directly to compiler deliverables:
-
-| Week | Course Topic | Syllabus Reference | Compiler Project Milestone | Status |
-| :--- | :--- | :--- | :--- | :---: |
-| **W01** | 09/09, 11 | Course info, OCaml intro | Repository setup, environment verification (GCC / MinGW), CLI design | Completed |
-| **W02** | 09/16, 18 | x86-64 Assembly | Target architecture definition, calling conventions, stack frame layout | Completed |
-| **W03** | 09/23, 25 | AST & Semantics | AST node definitions, Arena allocator, grammar specification | Completed |
-| **W04** | 09/30, 10/01 | HW1, Interpreter | AST tree printer (`-dump-ast`), small-step expression evaluator | Completed |
-| **W05** | 10/07, 09 | *No class (OOPSLA)* | Catch-up / buffer period | Completed |
-| **W06** | 10/14, 16 | Lexical analysis | Complete lexer implementation, keyword matching, Automatic Semicolon Insertion | Completed |
-| **W07** | 10/21, 23 | HW2 (mini-Python), Parsing | Precedence climbing for binary expressions, primary expressions, calls | Completed |
-| **W08** | 10/28, 30 | Parsing | Statements (`var`, `:=`, `if`, `for`, `return`), full file parser | Completed |
-| **W09** | 11/04, 06 | Typing | Scope stack, symbol table, type inference for `:=`, type verification | Completed |
-| **W10** | 11/11, 13 | HW3 (mini-Turtle), Mid-term | **Midterm Milestone Check:** Complete frontend (Lexer + Parser + Typecheck) | Current |
-| **W11** | 11/18, 20 | Parameters passing | Multi-argument passing via ABI registers (`%rcx`/`%rdx` or `%rdi`/`%rsi`) | Completed |
-| **W12** | 11/25, 27 | Compiler correctness, FP | Function pointers, nested scopes, start Formal Verification scaffold | Planned |
-| **W13** | 12/02, 04 | HW4 (W algorithm), FP | Algorithm W / Hindley-Milner type inference concepts | Planned |
-| **W14** | 12/09, 11 | Compilation of OO | Struct memory layout, field offset calculation (`expr.field`), methods | Planned |
-| **W15** | 12/16, 18 | Compiler optimization | Constant folding, dead code elimination, algebraic simplifications | Planned |
-| **W16** | 12/23, 25 | Compiler optimization, *Noël*| Control Flow Graph (CFG) construction, peephole optimizations | Planned |
-| **W17** | 12/30, 01/01 | GC, *Happy New Year* | Memory management runtime: Mark-and-Sweep / Arena / Boehm GC | Planned |
-| **W18** | 01/06, 08 | GC | Final integration, performance benchmarks, project report & presentation | Planned |
-
----
-
-## 7. Quick Start & Build Instructions
+## 4. Quick Start & Build Instructions
 
 ### Prerequisites
-- **C Compiler:** `gcc` (MinGW-w64 on Windows or standard GCC on Linux)
-- **Make / CMake:** `mingw32-make` or `make` or `cmake` (optional)
-- **Python:** Python 3.8+ (for automated test runner)
+- **C/C++ Toolchain:** GCC and G++ with C++17 support (`gcc` / `g++` via MinGW-w64 on Windows or standard GCC on Linux)
+- **Make:** `mingw32-make` (Windows) or `make` (Linux)
+- **Python:** Python 3.8+ (for automated tests)
 
-### Method 1: Direct Build with GCC
-```powershell
-gcc -std=c11 -Wall -Wextra -Iinclude src/common.c src/token.c src/lexer.c src/ast.c src/parser.c src/typecheck.c src/codegen_x86.c src/main.c -o build/minigo.exe
-```
-
-### Method 2: Build with Makefile
+### Build with Make (Recommended)
+On Windows (PowerShell / CMD):
 ```powershell
 mingw32-make
-# or on Linux / macOS:
+```
+On Linux / macOS:
+```bash
 make
 ```
 
-### Method 3: Build with CMake
+### Direct Compilation with GCC & G++
+If you prefer building without make:
 ```powershell
-cmake -B build
-cmake --build build
+# 1. Compile C frontend modules
+gcc -std=c11 -Wall -Wextra -Iinclude -O2 -c src/common.c src/token.c src/lexer.c src/ast.c src/parser.c src/typecheck.c
+
+# 2. Compile C++ middle-end and backend modules
+g++ -std=c++17 -Wall -Wextra -Iinclude -O2 -c src/tac.cpp src/cfg.cpp src/ssa.cpp src/opt.cpp src/codegen_ssa.cpp src/main.cpp
+
+# 3. Link everything into the compiler executable
+g++ -std=c++17 *.o -o build/minigo.exe
 ```
 
 ---
 
-## 8. Running Tests & Examples
+## 5. Compiling Mini Go Programs (GCC Bridge)
 
-### CLI Command Options
+The compiler supports both **two-stage compilation** (generating a `.s` file and piping into GCC) and **one-step compilation** (direct executable generation).
+
+### Method A: Two-Step Assembly & GCC Linking (Pipeline Inspection)
+Generate the x86-64 assembly text file with `-S` and compile it with `gcc`:
+```powershell
+# 1. Generate x86-64 assembly text file (.s)
+.\build\minigo.exe examples/02_arithmetic.go -S -o output.s
+
+# 2. Assemble and link with GCC into an executable
+gcc output.s -o program.exe
+
+# 3. Execute the resulting binary
+.\program.exe
+```
+
+You can chain these commands in a single line:
+```powershell
+.\build\minigo.exe examples/02_arithmetic.go -S -o output.s && gcc output.s -o program.exe && .\program.exe
+```
+
+### Method B: One-Step Compilation via GCC Bridge
+The compiler automatically handles the intermediate assembly and GCC invocation:
+```powershell
+.\build\minigo.exe -o program.exe examples/02_arithmetic.go
+.\program.exe
+```
+
+### Method C: Optimized Compilation (`-O1` / `-opt`)
+Enable Constant Folding and Dead Code Elimination before code generation:
+```powershell
+.\build\minigo.exe -O1 examples/02_arithmetic.go -S -o output_opt.s && gcc output_opt.s -o program_opt.exe && .\program_opt.exe
+```
+
+---
+
+## 6. Intermediate Representation (IR) Inspection
+
+`minigo` provides CLI flags to inspect every phase of the compiler pipeline:
+
+### 1. Three-Address Code (TAC)
+Flattened linear IR with temporaries:
+```powershell
+.\build\minigo.exe -dump-tac examples/02_arithmetic.go
+```
+*Output preview:*
 ```text
-Mini Go Compiler (minigo)
-Usage: minigo [options] <source.go>
-
-Options:
-  -dump-tokens       Tokenize the input file and print tokens (shows ASI)
-  -dump-ast          Parse the input file and print AST visual tree
-  -typecheck         Typecheck the program and report errors
-  -S                 Generate x86-64 assembly to stdout or specified -o file
-  -o <file>          Specify output file (binary executable, or assembly with -S)
-  -h, --help         Show help information
+func main():
+    a = 15
+    b = 27
+    t0 = a * 2
+    t1 = t0 + b
+    t2 = t1 - 4
+    c = t2
+    println(c)
+    ret c
 ```
 
-### 1. Inspecting Tokens (Lexer + ASI)
+### 2. Control Flow Graph (CFG) & Basic Blocks
+Shows basic blocks, predecessors, successors, and fallthroughs:
 ```powershell
-.\build\minigo.exe -dump-tokens examples/01_hello.go
+.\build\minigo.exe -dump-cfg examples/03_control_flow.go
 ```
 
-### 2. Inspecting the Abstract Syntax Tree (AST)
+### 3. Static Single Assignment (SSA) Form
+Displays versioned variables and $\phi$-nodes at control flow merge points:
 ```powershell
-.\build\minigo.exe -dump-ast examples/02_arithmetic.go
+.\build\minigo.exe -dump-ssa examples/03_control_flow.go
+```
+*Output preview:*
+```text
+function main():
+  B0 (B0):
+    [preds: | succs: B2 B1]
+    x_0 = 10
+    t0_0 = x_0 > 5
+    ifz t0_0 goto B2
+    jmp B1
+  ...
+  B4 (B4):
+    [preds: B3 B5 | succs: B6 B5]
+    i_1 = phi([B3: i_0], [B5: i_2])
+    sum_1 = phi([B3: sum_0], [B5: sum_2])
+    t1_0 = i_1 < 10
+    ifz t1_0 goto B6
+    jmp B5
+  B5 (B5):
+    [preds: B4 | succs: B4]
+    t2_0 = sum_1 + i_1
+    sum_2 = t2_0
+    t3_0 = i_1 + 1
+    i_2 = t3_0
+    jmp B4
+  B6 (B6):
+    [preds: B4 | succs:]
+    println(sum_1)
+    ret sum_1
 ```
 
-### 3. Inspecting Generated x86-64 Assembly
+### 4. Before-and-After Optimization Log (`-O1`)
+Displays the transformation made by Constant Folding and Dead Code Elimination:
 ```powershell
-.\build\minigo.exe -S examples/04_functions.go
+.\build\minigo.exe -O1 examples/02_arithmetic.go
+```
+*Output preview:*
+```text
+============================================================
+              SSA IR BEFORE OPTIMIZATION
+============================================================
+function main():
+  B0 (B0):
+    a_0 = 15
+    b_0 = 27
+    t0_0 = a_0 * 2
+    t1_0 = t0_0 + b_0
+    t2_0 = t1_0 - 4
+    c_0 = t2_0
+    println(c_0)
+    ret c_0
+
+============================================================
+              SSA IR AFTER OPTIMIZATION
+============================================================
+function main():
+  B0 (B0):
+    println(53)
+    ret 53
+
+============================================================
+Optimization Summary:
+  - Constants folded:       3
+  - Dead instructions removed: 6
+============================================================
 ```
 
-### 4. Compiling and Executing Native Binary
-```powershell
-.\build\minigo.exe -o build/run_arith.exe examples/02_arithmetic.go
-.\build\run_arith.exe
-# Output: 53
-```
+---
 
-### 5. Running the Automated Test Suite
+## 7. Running the Automated Test Suite
+
+Run the end-to-end integration test runner:
 ```powershell
 python tests/test_runner.py
 ```
+
 
 Expected output:
 ```text
@@ -272,11 +366,22 @@ Results: 4/4 tests passed.
 ========================================
 ```
 
----
+Run the unit tests:
+```powershell
+.\build\test_lexer.exe
+```
+# 1. Build the compiler from source
+mingw32-make
 
-## 9. Extra Credit: Formal Verification
+# 2. Inspect intermediate representation (IR) phases
+.\build\minigo.exe -dump-tac examples/02_arithmetic.go
+.\build\minigo.exe -dump-cfg examples/03_control_flow.go
+.\build\minigo.exe -dump-ssa examples/03_control_flow.go
+.\build\minigo.exe -O1 examples/02_arithmetic.go
 
-The syllabus offers extra credit for formal verification in **Rocq (Coq)** or **Lean 4**.
-A dedicated guide and starter scaffold are provided in [docs/FORMAL_VERIFICATION.md](file:///C:/Users/User/Desktop/compiler/docs/FORMAL_VERIFICATION.md):
-- **Option 1 (Recommended):** Operational semantics and Type Soundness proof (Progress & Preservation theorems).
-- **Option 2:** Verified expression compilation to an abstract stack machine.
+# 3. Run full optimization pipeline, compile to assembly, link with GCC, and execute
+.\build\minigo.exe -O1 examples/02_arithmetic.go -S -o output.s; gcc output.s -o program.exe; .\program.exe
+
+# 4. Inspect generated assembly and machine code
+Get-Content output.s
+objdump -d program.exe
