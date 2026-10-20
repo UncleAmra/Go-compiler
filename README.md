@@ -350,22 +350,6 @@ Run the end-to-end integration test runner:
 ```powershell
 python tests/test_runner.py
 ```
-
-
-Expected output:
-```text
-========================================
- Running Mini Go Compiler Integration Tests 
-========================================
---> Testing 01_hello.go... PASSED
---> Testing 02_arithmetic.go... PASSED
---> Testing 03_control_flow.go... PASSED
---> Testing 04_functions.go... PASSED
-========================================
-Results: 4/4 tests passed.
-========================================
-```
-
 Run the unit tests:
 ```powershell
 .\build\test_lexer.exe
